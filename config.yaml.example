@@ -1,0 +1,9 @@
+teslamate:
+  tailscale_ip: "100.x.x.x"    # 替换为云服务器的 Tailscale IP
+  mqtt_port: 1883
+  api_port: 8080
+  car_id: 1
+
+openclaw:
+  gateway_url: "ws://127.0.0.1:18789"
+  skill_id: "teslamate"

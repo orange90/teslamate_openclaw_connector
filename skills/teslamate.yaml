@@ -1,0 +1,74 @@
+id: teslamate
+name: TeslaMate 车辆数据
+description: 通过 TeslaMate 查询特斯拉车辆实时数据，包括电量、位置、充电状态、温度等。
+
+intents:
+  - name: battery_level
+    description: 查询当前电量和预计续航
+    examples:
+      - "我的特斯拉现在电量多少？"
+      - "电量还有多少？"
+      - "续航还剩多少？"
+
+  - name: charging_state
+    description: 查询充电状态和是否接入充电桩
+    examples:
+      - "特斯拉在充电吗？"
+      - "充电状态怎么样？"
+      - "充电桩接好了吗？"
+
+  - name: location
+    description: 查询车辆当前位置（经纬度）
+    examples:
+      - "车停在哪里？"
+      - "我的特斯拉在哪？"
+      - "车的位置是哪里？"
+
+  - name: lock_status
+    description: 查询车门锁定状态
+    examples:
+      - "车锁好了吗？"
+      - "车门锁着吗？"
+      - "特斯拉锁车了吗？"
+
+  - name: temperature
+    description: 查询车内外温度
+    examples:
+      - "车里现在多少度？"
+      - "车内温度是多少？"
+      - "外面多少度？"
+
+  - name: car_state
+    description: 查询车辆整体状态（在线/休眠/行驶中/充电中）
+    examples:
+      - "车现在是什么状态？"
+      - "特斯拉在线吗？"
+      - "车在休眠吗？"
+
+  - name: full_status
+    description: 查询车辆完整状态摘要
+    examples:
+      - "车辆状态总览"
+      - "给我看看车的所有状态"
+      - "特斯拉现在怎么样？"
+
+  - name: recent_charges
+    description: 查询最近的充电记录
+    examples:
+      - "最近一次充电记录"
+      - "查看充电历史"
+      - "最近几次充电情况"
+
+  - name: recent_drives
+    description: 查询最近的行驶记录
+    examples:
+      - "最近的行程记录"
+      - "上次开了多远？"
+      - "本周行驶了多少公里？"
+
+  - name: stats
+    description: 查询车辆累计统计数据
+    examples:
+      - "累计行驶了多少公里？"
+      - "总共充了多少次电？"
+      - "统计数据"

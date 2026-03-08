@@ -1,0 +1,13 @@
+version: "3.8"
+
+# 本地开发环境：启动一个轻量 MQTT broker 用于测试
+# 生产环境中 MQTT broker 运行在 TeslaMate 云服务器上
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
