@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -9,6 +9,10 @@ class TeslaMateConfig:
     mqtt_port: int = 1883
     api_port: int = 8080
     car_id: int = 1
+    db_port: int = 5432
+    db_user: str = "teslamate"
+    db_password: str = ""
+    db_name: str = "teslamate"
 
     @property
     def mqtt_host(self) -> str:
@@ -48,6 +52,10 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             mqtt_port=tm.get("mqtt_port", 1883),
             api_port=tm.get("api_port", 8080),
             car_id=tm.get("car_id", 1),
+            db_port=tm.get("db_port", 5432),
+            db_user=tm.get("db_user", "teslamate"),
+            db_password=tm.get("db_password", ""),
+            db_name=tm.get("db_name", "teslamate"),
         ),
         openclaw=OpenClawConfig(
             http_port=oc.get("http_port", 18790),

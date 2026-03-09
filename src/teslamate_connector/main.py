@@ -14,6 +14,7 @@ from threading import Thread
 from urllib.parse import parse_qs, urlparse
 
 from .config import load_config
+from .db_client import TeslaMateDB
 from .mqtt_client import MQTTClient
 from .rest_client import TeslaMateApiClient
 from .skill_handler import SkillHandler
@@ -92,7 +93,16 @@ async def run(config_path: str = "config.yaml") -> None:
         base_url=config.teslamate.api_base_url,
         car_id=config.teslamate.car_id,
     )
-    _handler = SkillHandler(mqtt=mqtt, rest=rest)
+    db = TeslaMateDB(
+        host=config.teslamate.tailscale_ip,
+        port=config.teslamate.db_port,
+        user=config.teslamate.db_user,
+        password=config.teslamate.db_password,
+        database=config.teslamate.db_name,
+        car_id=config.teslamate.car_id,
+    )
+    await db.connect()
+    _handler = SkillHandler(mqtt=mqtt, rest=rest, db=db)
 
     mqtt.connect()
     http_server = _start_http_server(config.openclaw.http_port)
@@ -115,6 +125,7 @@ async def run(config_path: str = "config.yaml") -> None:
         http_server.shutdown()
         mqtt.disconnect()
         await rest.aclose()
+        await db.close()
         logger.info("Connector stopped.")
 
 

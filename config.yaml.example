@@ -3,6 +3,10 @@ teslamate:
   mqtt_port: 1883
   api_port: 8080
   car_id: 1
+  db_port: 5432
+  db_user: teslamate
+  db_password: "your_db_password"
+  db_name: teslamate
 
 openclaw:
   http_port: 18790              # 本地 HTTP API 端口，OpenClaw skill 通过此端口查询数据

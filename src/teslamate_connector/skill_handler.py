@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from .mqtt_client import MQTTClient
 from .rest_client import TeslaMateApiClient
+from .db_client import TeslaMateDB
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,10 @@ STATE_LABELS = {
 
 
 class SkillHandler:
-    def __init__(self, mqtt: MQTTClient, rest: TeslaMateApiClient):
+    def __init__(self, mqtt: MQTTClient, rest: TeslaMateApiClient, db: TeslaMateDB):
         self.mqtt = mqtt
         self.rest = rest
+        self.db = db
 
     async def handle(self, message: dict) -> str:
         intent = message.get("intent", "")
@@ -159,59 +161,36 @@ class SkillHandler:
 
     async def _drives_summary(self, params: dict) -> str:
         days = int(params.get("days", 7))
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-        all_drives = await self.rest.get_all_drives()
-        if not all_drives:
-            return "暂无行驶记录。"
-
-        filtered = []
-        for d in all_drives:
-            start_str = d.get("start_date", "")
-            if not start_str:
-                continue
-            # Parse ISO 8601, handle both Z and +00:00
-            start_str = start_str.replace("Z", "+00:00")
-            try:
-                start_dt = datetime.fromisoformat(start_str)
-            except ValueError:
-                continue
-            if start_dt >= cutoff:
-                filtered.append(d)
-
-        if not filtered:
+        row = await self.db.drives_summary(days)
+        trip_count = row["trip_count"]
+        if trip_count == 0:
             return f"过去 {days} 天内没有行驶记录。"
-
-        total_km = sum(float(d.get("distance") or 0) for d in filtered)
-        total_trips = len(filtered)
-        total_min = sum(float(d.get("duration_min") or 0) for d in filtered)
-        total_h = int(total_min // 60)
-        total_m = int(total_min % 60)
-
-        duration_str = f"{total_h} 小时 {total_m} 分钟" if total_h else f"{total_m} 分钟"
+        total_km = float(row["total_km"])
+        total_min = float(row["total_min"])
+        h, m = int(total_min // 60), int(total_min % 60)
+        duration_str = f"{h} 小时 {m} 分钟" if h else f"{m} 分钟"
         return (
             f"过去 {days} 天行驶统计：\n"
-            f"  行程次数：{total_trips} 次\n"
+            f"  行程次数：{trip_count} 次\n"
             f"  累计里程：{total_km:.1f} km\n"
             f"  累计时长：{duration_str}"
         )
 
     async def _longest_drive(self, params: dict) -> str:
-        all_drives = await self.rest.get_all_drives()
-        if not all_drives:
+        row = await self.db.longest_drive()
+        if not row:
             return "暂无行驶记录。"
-
-        longest = max(all_drives, key=lambda d: float(d.get("distance") or 0))
-        distance = float(longest.get("distance") or 0)
-        duration = float(longest.get("duration_min") or 0)
-        start = longest.get("start_date", "")[:16].replace("T", " ")
-        start_addr = longest.get("start_address", "")
-        end_addr = longest.get("end_address", "")
+        distance = float(row["distance"] or 0)
+        duration = float(row["duration_min"] or 0)
+        start_dt = row["start_date"]
+        start = start_dt.strftime("%Y-%m-%d %H:%M") if start_dt else ""
+        start_addr = row.get("start_address") or ""
+        end_addr = row.get("end_address") or ""
         h, m = int(duration // 60), int(duration % 60)
         duration_str = f"{h} 小时 {m} 分钟" if h else f"{m} 分钟"
-
         lines = [f"最远一次行程：{distance:.1f} km"]
-        lines.append(f"  时间：{start}")
+        if start:
+            lines.append(f"  时间：{start}")
         lines.append(f"  时长：{duration_str}")
         if start_addr:
             lines.append(f"  出发：{start_addr}")

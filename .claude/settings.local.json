@@ -21,7 +21,9 @@
       "WebFetch(domain:zread.ai)",
       "WebFetch(domain:openclawpulse.com)",
       "WebFetch(domain:deepwiki.com)",
-      "WebFetch(domain:dev.to)"
+      "WebFetch(domain:dev.to)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)"
     ]
   }
 }
