@@ -1,24 +1,36 @@
 # TeslaMate Connector — Agent Installation Guide
 
-You are an AI assistant helping the user install and configure the TeslaMate OpenClaw Connector. This project lets the user query their Tesla vehicle data (battery, location, charging state, etc.) through natural language.
+You are an AI assistant helping the user install and configure the TeslaMate OpenClaw Connector. This project lets the user query their Tesla vehicle data (battery, location, charging state, etc.) through natural language in OpenClaw.
 
-Follow the steps below in order. At each step, run the commands, check the output, and handle errors before moving on. Ask the user only when their input is genuinely required.
+## Architecture (understand this before starting)
+
+```
+OpenClaw model
+    │  reads description, decides to use skill
+    ▼
+skills/teslamate/SKILL.md   ← installed at ~/.openclaw/skills/teslamate/
+    │  executes Bash tool
+    ▼
+curl http://127.0.0.1:18790/query?intent=battery_level
+    │  local HTTP call
+    ▼
+teslamate_connector daemon  ← Python process, runs in background
+    │  MQTT over Tailscale
+    ▼
+TeslaMate cloud server
+```
+
+The connector is **not** a WebSocket plugin — it is a local HTTP daemon. OpenClaw's skill system calls it via curl.
 
 ---
 
 ## Step 1 — Check prerequisites
 
-Run the following checks. If anything is missing, install it before continuing.
-
 ```bash
-# Python 3.12+
-python3 --version
-
-# uv
-uv --version
-
-# git
+python3 --version   # must be 3.12+
+uv --version        # must be installed
 git --version
+curl --version
 ```
 
 **If uv is missing:**
@@ -26,13 +38,11 @@ git --version
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Tailscale check — ask the user:**
-> "What is your TeslaMate server's Tailscale IP? (format: 100.x.x.x)"
+**Ask the user for two values:**
+1. "What is your TeslaMate server's Tailscale IP? (format: 100.x.x.x)"
+2. "What is your car's ID in TeslaMate? (default: 1 — check TeslaMate settings if unsure)"
 
-Also ask:
-> "What car ID is your Tesla in TeslaMate? (default: 1)"
-
-Store these answers — you will need them in Step 3.
+Store these — you will need them in Step 3.
 
 ---
 
@@ -44,30 +54,27 @@ cd teslamate_openclaw_connector
 uv sync
 ```
 
-Expected: `uv sync` completes without errors and installs all packages including `paho-mqtt`, `httpx`, `websockets`, `pyyaml`.
+Expected: completes without errors, installs `paho-mqtt`, `httpx`, `pyyaml`.
 
 ---
 
 ## Step 3 — Create config.yaml
 
-Fill in the values collected in Step 1:
-
 ```bash
 cp config.yaml.example config.yaml
 ```
 
-Then edit `config.yaml` with the user's Tailscale IP and car ID:
+Edit `config.yaml` using the values from Step 1:
 
 ```yaml
 teslamate:
-  tailscale_ip: "<TAILSCALE_IP>"   # from Step 1
+  tailscale_ip: "<TAILSCALE_IP>"
   mqtt_port: 1883
   api_port: 8080
-  car_id: <CAR_ID>                 # from Step 1
+  car_id: <CAR_ID>
 
 openclaw:
-  gateway_url: "ws://127.0.0.1:18789"
-  skill_id: "teslamate"
+  http_port: 18790
 ```
 
 ---
@@ -78,43 +85,25 @@ openclaw:
 nc -zv <TAILSCALE_IP> 1883
 ```
 
-**If this succeeds:** move on to Step 5.
+**If this succeeds:** move to Step 5.
 
-**If this fails ("Connection refused" or timeout):** follow the troubleshooting tree below.
+**If this fails:** work through the troubleshooting tree:
 
-### Troubleshooting tree
-
-#### 4a — Check Tailscale tunnel first
+### 4a — Check Tailscale tunnel
 ```bash
 ping -c 3 <TAILSCALE_IP>
 ```
-- If ping fails: Tailscale is not connected. Ask the user to check that both machines are logged in to the same Tailscale account.
-- If ping succeeds but nc fails: continue to 4b.
+- Ping fails → Tailscale is disconnected. Ask the user to check both machines are logged in to the same Tailscale account.
+- Ping succeeds but nc fails → continue to 4b.
 
-#### 4b — Check if mosquitto port is exposed on the server
-SSH into the cloud server and run:
+### 4b — Check mosquitto port on the cloud server
+SSH into the cloud server:
 ```bash
 ss -tlnp | grep 1883
 ```
-
-- If no output: mosquitto is not running. Ask the user to start it: `docker compose up -d mosquitto`
-- If output shows `127.0.0.1:1883`: port is only listening locally. Fix:
-
-On the cloud server, find the TeslaMate docker-compose.yml (usually `/opt/teslamate/docker-compose.yml`) and change the mosquitto service:
-```yaml
-# Before (commented out):
-mosquitto:
-  # ports:
-  #   - 1883:1883
-
-# After:
-mosquitto:
-  ports:
-    - 1883:1883
-```
-Then restart: `docker compose up -d mosquitto`
-
-- If output shows `0.0.0.0:1883` but nc still fails: Docker iptables may be blocking Tailscale traffic. Fix:
+- No output → mosquitto not running: `docker compose up -d mosquitto`
+- Shows `127.0.0.1:1883` → port not exposed externally. Find `/opt/teslamate/docker-compose.yml`, uncomment the mosquitto ports block, then: `docker compose up -d mosquitto`
+- Shows `0.0.0.0:1883` but nc still fails → Docker iptables blocking Tailscale:
 
 ```bash
 # On the cloud server:
@@ -122,104 +111,127 @@ iptables -I DOCKER-USER -i tailscale0 -j ACCEPT
 apt install iptables-persistent -y && netfilter-persistent save
 ```
 
-#### 4c — Verify data is actually flowing
-
-Once nc succeeds, subscribe to MQTT and ask the user to wake their car from the Tesla app:
-
+### 4c — Verify data is flowing
 ```bash
-# Install if needed: brew install mosquitto (macOS)
+# macOS: brew install mosquitto if needed
 mosquitto_sub -h <TAILSCALE_IP> -t "teslamate/cars/#" -v
 ```
+Ask the user to wake their car from the Tesla app. Within 30 seconds you should see lines like `teslamate/cars/1/battery_level 82`. Press Ctrl+C.
 
-Wait up to 30 seconds. If data like `teslamate/cars/1/battery_level 82` appears, MQTT is working. Press Ctrl+C.
-
-**If no data appears after 30 seconds:** TeslaMate may not be publishing. On the cloud server:
-
+**If no data appears:** check TeslaMate logs on the cloud server:
 ```bash
 docker compose logs --tail=30 teslamate | grep -iE 'mqtt|error|domain'
 ```
-
-If logs show `"non-existing domain"` for Tesla API calls, Docker DNS is broken. Fix:
-
+If logs show `"non-existing domain"` for Tesla API calls, Docker DNS is broken:
 ```bash
 # On the cloud server:
 cat > /etc/docker/daemon.json << 'EOF'
-{
-  "dns": ["114.114.114.114", "8.8.8.8"]
-}
+{"dns": ["114.114.114.114", "8.8.8.8"]}
 EOF
 systemctl restart docker
 cd /opt/teslamate && docker compose up -d
 ```
-
-Wait ~15 seconds, then check logs again:
-```bash
-docker compose logs --tail=10 teslamate | grep -iE 'mqtt|token|online'
-```
-Should show: `MQTT connection has been established` and `car_id=1 Start / :online`
+Wait 15 seconds, then check: `docker compose logs --tail=5 teslamate` — should show `MQTT connection has been established`.
 
 ---
 
-## Step 5 — Start the connector
+## Step 5 — Start the connector daemon
 
-From the project directory:
+Run this in a terminal (keep it running in the background):
 
 ```bash
+cd teslamate_openclaw_connector
 uv run python -m teslamate_connector
 ```
 
-Confirm the following lines appear in the output:
-- `MQTT connected to <TAILSCALE_IP>:1883`
-- `Subscribed to teslamate/cars/1/#`
-- `Registered skill 'teslamate' with OpenClaw Gateway`
+Expected output:
+```
+[INFO] Loaded config: TeslaMate at 100.x.x.x
+[INFO] MQTT client started, connecting to 100.x.x.x:1883
+[INFO] MQTT connected to 100.x.x.x:1883
+[INFO] Subscribed to teslamate/cars/1/#
+[INFO] Local HTTP API listening on http://127.0.0.1:18790
+[INFO] Connector ready. Query with: curl http://127.0.0.1:18790/query?intent=full_status
+```
 
-If the Gateway connection fails (`OSError` or `ConnectionClosed`), it will auto-retry every 5 seconds — this is expected if OpenClaw Gateway is not yet running.
+Verify it works:
+```bash
+curl -s "http://127.0.0.1:18790/query?intent=battery_level"
+```
+Expected: `{"text": "当前电量：XX%，预计续航约 XXX km"}`
 
 ---
 
-## Step 6 — Register the skill with OpenClaw
+## Step 6 — Install the OpenClaw skill
 
-Import the skill definition file into OpenClaw:
+Copy the skill directory to OpenClaw's skills folder:
 
+```bash
+mkdir -p ~/.openclaw/skills
+cp -r skills/teslamate ~/.openclaw/skills/teslamate
 ```
-skills/teslamate.yaml
+
+Verify:
+```bash
+cat ~/.openclaw/skills/teslamate/SKILL.md | head -5
 ```
 
-This file defines 10 intents. After importing, the following natural language queries will work:
-
-| Say this | Intent triggered |
-|----------|-----------------|
-| "What's my battery level?" | `battery_level` |
-| "Is my car charging?" | `charging_state` |
-| "Where is my car?" | `location` |
-| "Is it locked?" | `lock_status` |
-| "What's the temperature inside?" | `temperature` |
-| "What state is the car in?" | `car_state` |
-| "Give me a full status" | `full_status` |
-| "Show my recent charges" | `recent_charges` |
-| "Show my recent trips" | `recent_drives` |
-| "What are my total stats?" | `stats` |
+OpenClaw loads skills automatically from `~/.openclaw/skills/`. No restart needed if OpenClaw is already running — the skill will be available on the next conversation.
 
 ---
 
-## Step 7 — Verify end-to-end
+## Step 7 — End-to-end verification
 
 Ask the user to send this message in OpenClaw:
 > "What's my Tesla's battery level?"
 
-The connector should log `Handling intent: battery_level` and OpenClaw should reply with the current charge percentage.
+OpenClaw should invoke the `teslamate` skill, which calls:
+```bash
+curl -s "http://127.0.0.1:18790/query?intent=battery_level"
+```
+And return the battery percentage to the user.
+
+If OpenClaw says the skill is not available, ask the user to restart OpenClaw or check that `~/.openclaw/skills/teslamate/SKILL.md` exists.
 
 Installation is complete.
 
 ---
 
-## Reference — What each file does
+## Keeping the daemon running
 
-| File | Purpose |
-|------|---------|
-| `config.yaml` | Your local config (gitignored) |
-| `src/teslamate_connector/main.py` | Entry point, WebSocket loop |
-| `src/teslamate_connector/mqtt_client.py` | Subscribes to TeslaMate MQTT |
-| `src/teslamate_connector/rest_client.py` | Calls TeslaMateApi REST |
-| `src/teslamate_connector/skill_handler.py` | Maps intents to data queries |
-| `skills/teslamate.yaml` | OpenClaw skill definition |
+To run the connector automatically at login (macOS):
+
+```bash
+# Create a launchd plist — ask the user for the actual project path first
+PROJECT_PATH="$(pwd)"  # run this inside the project directory
+
+cat > ~/Library/LaunchAgents/com.teslamate.connector.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.teslamate.connector</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PROJECT_PATH/.venv/bin/python</string>
+        <string>-m</string>
+        <string>teslamate_connector</string>
+        <string>$PROJECT_PATH/config.yaml</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$PROJECT_PATH</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$PROJECT_PATH/connector.log</string>
+    <key>StandardErrorPath</key>
+    <string>$PROJECT_PATH/connector.log</string>
+</dict>
+</plist>
+EOF
+
+launchctl load ~/Library/LaunchAgents/com.teslamate.connector.plist
+```

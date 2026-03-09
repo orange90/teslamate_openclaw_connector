@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch:*)",
+      "WebFetch(domain:api.github.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.teslamate.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(git push:*)",
+      "Bash(ssh:*)",
+      "Bash(nc:*)",
+      "Bash(timeout 15 mosquitto_sub:*)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:www.learnclawdbot.org)",
+      "WebFetch(domain:openclawcn.com)",
+      "WebFetch(domain:lumadock.com)",
+      "WebFetch(domain:www.hubwiz.com)",
+      "WebFetch(domain:zread.ai)",
+      "WebFetch(domain:openclawpulse.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:dev.to)"
+    ]
+  }
+}

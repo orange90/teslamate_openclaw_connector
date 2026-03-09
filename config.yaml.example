@@ -5,5 +5,4 @@ teslamate:
   car_id: 1
 
 openclaw:
-  gateway_url: "ws://127.0.0.1:18789"
-  skill_id: "teslamate"
+  http_port: 18790              # 本地 HTTP API 端口，OpenClaw skill 通过此端口查询数据

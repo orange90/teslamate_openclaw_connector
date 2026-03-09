@@ -21,8 +21,7 @@ class TeslaMateConfig:
 
 @dataclass
 class OpenClawConfig:
-    gateway_url: str
-    skill_id: str = "teslamate"
+    http_port: int = 18790
 
 
 @dataclass
@@ -42,7 +41,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         raw = yaml.safe_load(f)
 
     tm = raw["teslamate"]
-    oc = raw["openclaw"]
+    oc = raw.get("openclaw", {})
     return Config(
         teslamate=TeslaMateConfig(
             tailscale_ip=tm["tailscale_ip"],
@@ -51,7 +50,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             car_id=tm.get("car_id", 1),
         ),
         openclaw=OpenClawConfig(
-            gateway_url=oc["gateway_url"],
-            skill_id=oc.get("skill_id", "teslamate"),
+            http_port=oc.get("http_port", 18790),
         ),
     )

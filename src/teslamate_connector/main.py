@@ -1,17 +1,17 @@
 """
 TeslaMate OpenClaw Connector
 
-Connects to TeslaMate (via Tailscale) and exposes vehicle data
-to OpenClaw AI assistant through a WebSocket skill interface.
+Maintains an MQTT connection to TeslaMate (via Tailscale) and serves
+vehicle data through a local HTTP API consumed by the OpenClaw skill.
 """
 import asyncio
 import json
 import logging
 import signal
 import sys
-from pathlib import Path
-
-import websockets
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+from urllib.parse import parse_qs, urlparse
 
 from .config import load_config
 from .mqtt_client import MQTTClient
@@ -24,8 +24,61 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_handler: SkillHandler | None = None
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _make_http_handler():
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            logger.debug("HTTP %s", fmt % args)
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+
+            if parsed.path == "/health":
+                self._respond(200, {"status": "ok"})
+                return
+
+            if parsed.path == "/query":
+                params = parse_qs(parsed.query)
+                intent = params.get("intent", ["full_status"])[0]
+                msg = {"intent": intent, "params": {}}
+                future = asyncio.run_coroutine_threadsafe(
+                    _handler.handle(msg), _loop
+                )
+                try:
+                    result = future.result(timeout=15)
+                    self._respond(200, {"text": result})
+                except Exception as e:
+                    self._respond(500, {"error": str(e)})
+                return
+
+            self._respond(404, {"error": "not found"})
+
+        def _respond(self, code: int, body: dict):
+            data = json.dumps(body, ensure_ascii=False).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    return Handler
+
+
+def _start_http_server(port: int) -> HTTPServer:
+    server = HTTPServer(("127.0.0.1", port), _make_http_handler())
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Local HTTP API listening on http://127.0.0.1:%d", port)
+    return server
+
 
 async def run(config_path: str = "config.yaml") -> None:
+    global _handler, _loop
+    _loop = asyncio.get_running_loop()
+
     config = load_config(config_path)
     logger.info("Loaded config: TeslaMate at %s", config.teslamate.tailscale_ip)
 
@@ -38,9 +91,10 @@ async def run(config_path: str = "config.yaml") -> None:
         base_url=config.teslamate.api_base_url,
         car_id=config.teslamate.car_id,
     )
-    handler = SkillHandler(mqtt=mqtt, rest=rest)
+    _handler = SkillHandler(mqtt=mqtt, rest=rest)
 
     mqtt.connect()
+    http_server = _start_http_server(config.openclaw.http_port)
 
     stop_event = asyncio.Event()
 
@@ -52,69 +106,15 @@ async def run(config_path: str = "config.yaml") -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _handle_signal)
 
+    logger.info("Connector ready. Query with: curl http://127.0.0.1:%d/query?intent=full_status", config.openclaw.http_port)
+
     try:
-        await _gateway_loop(config, handler, stop_event)
+        await stop_event.wait()
     finally:
+        http_server.shutdown()
         mqtt.disconnect()
         await rest.aclose()
         logger.info("Connector stopped.")
-
-
-async def _gateway_loop(config, handler: SkillHandler, stop_event: asyncio.Event) -> None:
-    gateway_url = config.openclaw.gateway_url
-    skill_id = config.openclaw.skill_id
-    reconnect_delay = 5
-
-    while not stop_event.is_set():
-        try:
-            logger.info("Connecting to OpenClaw Gateway: %s", gateway_url)
-            async with websockets.connect(gateway_url) as ws:
-                # Register this skill with the gateway
-                await ws.send(json.dumps({
-                    "type": "register",
-                    "skill_id": skill_id,
-                    "name": "TeslaMate",
-                    "description": "查询特斯拉车辆实时数据（电量、位置、充电状态等）",
-                }))
-                logger.info("Registered skill '%s' with OpenClaw Gateway", skill_id)
-
-                async def _recv_loop():
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                        except json.JSONDecodeError:
-                            logger.warning("Received non-JSON message: %s", raw)
-                            continue
-
-                        msg_type = msg.get("type")
-                        if msg_type == "query":
-                            reply = await handler.handle(msg)
-                            await ws.send(json.dumps({
-                                "type": "response",
-                                "request_id": msg.get("request_id"),
-                                "text": reply,
-                            }))
-                        elif msg_type == "ping":
-                            await ws.send(json.dumps({"type": "pong"}))
-                        else:
-                            logger.debug("Unhandled message type: %s", msg_type)
-
-                recv_task = asyncio.create_task(_recv_loop())
-                stop_task = asyncio.create_task(stop_event.wait())
-                done, pending = await asyncio.wait(
-                    [recv_task, stop_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for t in pending:
-                    t.cancel()
-                if stop_event.is_set():
-                    break
-
-        except (websockets.ConnectionClosed, OSError) as e:
-            if stop_event.is_set():
-                break
-            logger.warning("Gateway connection lost (%s), retrying in %ds…", e, reconnect_delay)
-            await asyncio.sleep(reconnect_delay)
 
 
 def main() -> None:
