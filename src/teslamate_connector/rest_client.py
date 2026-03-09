@@ -28,6 +28,17 @@ class TeslaMateApiClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def get_all_drives(self, max_pages: int = 20) -> list[dict]:
+        """Fetch all drives across pages up to max_pages."""
+        all_drives = []
+        for page in range(1, max_pages + 1):
+            data = await self.get_drives(page=page)
+            drives = data.get("data", [])
+            if not drives:
+                break
+            all_drives.extend(drives)
+        return all_drives
+
     async def get_stats(self) -> dict:
         url = f"{self.base_url}/api/v1/cars/{self.car_id}/stats"
         resp = await self._client.get(url)

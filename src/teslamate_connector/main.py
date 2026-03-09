@@ -43,7 +43,8 @@ def _make_http_handler():
             if parsed.path == "/query":
                 params = parse_qs(parsed.query)
                 intent = params.get("intent", ["full_status"])[0]
-                msg = {"intent": intent, "params": {}}
+                extra = {k: v[0] for k, v in params.items() if k != "intent"}
+                msg = {"intent": intent, "params": extra}
                 future = asyncio.run_coroutine_threadsafe(
                     _handler.handle(msg), _loop
                 )

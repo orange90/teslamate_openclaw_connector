@@ -7,6 +7,7 @@ OpenClaw sends JSON messages of the form:
 This module returns a plain-text answer string for each intent.
 """
 import logging
+from datetime import datetime, timezone, timedelta
 from .mqtt_client import MQTTClient
 from .rest_client import TeslaMateApiClient
 
@@ -52,6 +53,8 @@ class SkillHandler:
             "car_state": self._car_state,
             "recent_charges": self._recent_charges,
             "recent_drives": self._recent_drives,
+            "drives_summary": self._drives_summary,
+            "longest_drive": self._longest_drive,
             "stats": self._stats,
             "full_status": self._full_status,
         }
@@ -152,6 +155,68 @@ class SkillHandler:
             duration = d.get("duration_min", "")
             line = f"  {start}  距离：{distance} km  时长：{duration} 分钟"
             lines.append(line)
+        return "\n".join(lines)
+
+    async def _drives_summary(self, params: dict) -> str:
+        days = int(params.get("days", 7))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        all_drives = await self.rest.get_all_drives()
+        if not all_drives:
+            return "暂无行驶记录。"
+
+        filtered = []
+        for d in all_drives:
+            start_str = d.get("start_date", "")
+            if not start_str:
+                continue
+            # Parse ISO 8601, handle both Z and +00:00
+            start_str = start_str.replace("Z", "+00:00")
+            try:
+                start_dt = datetime.fromisoformat(start_str)
+            except ValueError:
+                continue
+            if start_dt >= cutoff:
+                filtered.append(d)
+
+        if not filtered:
+            return f"过去 {days} 天内没有行驶记录。"
+
+        total_km = sum(float(d.get("distance") or 0) for d in filtered)
+        total_trips = len(filtered)
+        total_min = sum(float(d.get("duration_min") or 0) for d in filtered)
+        total_h = int(total_min // 60)
+        total_m = int(total_min % 60)
+
+        duration_str = f"{total_h} 小时 {total_m} 分钟" if total_h else f"{total_m} 分钟"
+        return (
+            f"过去 {days} 天行驶统计：\n"
+            f"  行程次数：{total_trips} 次\n"
+            f"  累计里程：{total_km:.1f} km\n"
+            f"  累计时长：{duration_str}"
+        )
+
+    async def _longest_drive(self, params: dict) -> str:
+        all_drives = await self.rest.get_all_drives()
+        if not all_drives:
+            return "暂无行驶记录。"
+
+        longest = max(all_drives, key=lambda d: float(d.get("distance") or 0))
+        distance = float(longest.get("distance") or 0)
+        duration = float(longest.get("duration_min") or 0)
+        start = longest.get("start_date", "")[:16].replace("T", " ")
+        start_addr = longest.get("start_address", "")
+        end_addr = longest.get("end_address", "")
+        h, m = int(duration // 60), int(duration % 60)
+        duration_str = f"{h} 小时 {m} 分钟" if h else f"{m} 分钟"
+
+        lines = [f"最远一次行程：{distance:.1f} km"]
+        lines.append(f"  时间：{start}")
+        lines.append(f"  时长：{duration_str}")
+        if start_addr:
+            lines.append(f"  出发：{start_addr}")
+        if end_addr:
+            lines.append(f"  到达：{end_addr}")
         return "\n".join(lines)
 
     async def _stats(self, params: dict) -> str:
